@@ -1,15 +1,20 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 import os
+import csv
 
-# ==========================================
-# KLASA DO OBSŁUGI DYMKÓW Z PODPOWIEDZIAMI
-# ==========================================
+def resource_path(relative_path):
+    """ Zwraca bezwzględną ścieżkę do plików, działa dla skryptu .py i dla pliku .exe """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
@@ -37,16 +42,13 @@ class ToolTip:
             self.tooltip_window.destroy()
             self.tooltip_window = None
 
-# ==========================================
-# GŁÓWNA APLIKACJA
-# ==========================================
 class BullingtonApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Kalkulator strat metodą Bullingtona")
         self.root.geometry("1200x850")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.df = None
+        self.df = None # Teraz to bedzie slownik z numpy arrays
 
         # BAZA TRAS
         '''
@@ -91,11 +93,11 @@ class BullingtonApp:
 
         # podział na teren i maszt + teksty dymków
         fields = [
-            ("Teren Tx [m n.p.m.] (Auto z pliku)", "h_ter_tx", "210", ""),
-            ("Wysokość zawieszenia anteny nadawczej Tx nad gruntem [m]", "h_ant_tx", "20", ""),
-            ("Teren Rx [m n.p.m.] (Auto z pliku)", "h_ter_rx", "230", ""),
-            ("Wysokość zawieszenia anteny nadawczej Rx nad gruntem [m]", "h_ant_rx", "20", ""),
-            ("Całkowita odległość [km] (Auto z pliku)", "dist", "70.184", ""),
+            ("Teren Tx [m n.p.m.] (Auto z pliku)", "h_ter_tx", "0", ""),
+            ("Wysokość zawieszenia anteny nadawczej Tx nad gruntem [m]", "h_ant_tx", "0", ""),
+            ("Teren Rx [m n.p.m.] (Auto z pliku)", "h_ter_rx", "0", ""),
+            ("Wysokość zawieszenia anteny nadawczej Rx nad gruntem [m]", "h_ant_rx", "0", ""),
+            ("Całkowita odległość [km] (Auto z pliku)", "dist", "0", ""),
             ("Współczynnik k (krzywizna Ziemi)", "k", "1.333", "Współczynnik refrakcji atmosferycznej.\n• k = 1.333: Standardowa, kulista Ziemia.\n• k = 9999: Wyłącza krzywiznę (Płaska Ziemia).")
         ]
 
@@ -117,14 +119,14 @@ class BullingtonApp:
             entry.pack(fill="x", pady=2)
             self.entries[key] = entry
 
-        # Zidentyfikowane Szczyty (z dymkiem)
+        # Zidentyfikowane Szczyty 
         sec3_frame = tk.Frame(self.sidebar, bg="#f4f4f4")
         sec3_frame.pack(fill="x", pady=(15, 5))
         
         tk.Label(sec3_frame, text="3. ZIDENTYFIKOWANE SZCZYTY", font=("Arial", 11, "bold"), bg="#f4f4f4").pack(side="left")
         info3 = tk.Label(sec3_frame, text=" (?)", font=("Arial", 10, "bold"), fg="#0078D7", bg="#f4f4f4", cursor="hand2")
         info3.pack(side="left")
-        ToolTip(info3, "Wysokość tych szczytów (h) ZAWIERA już poprawkę na wybrzuszenie Ziemi.\nDlatego ich wartość jest wyższa, niż wprost odczytana z pliku/mapy.")
+        ToolTip(info3, "Wysokość  szczytów (h) zawiera poprawkę na wybrzuszenie Ziemi.\nDlatego ich wartość jest wyższa, niż odczytana z pliku=.")
 
         manual_frame = tk.Frame(self.sidebar, bg="#f4f4f4")
         manual_frame.pack(fill="x")
@@ -142,8 +144,8 @@ class BullingtonApp:
 
         # Akcje
         tk.Label(self.sidebar, text="\n4. AKCJE", font=("Arial", 11, "bold"), bg="#f4f4f4").pack(pady=5)
-        tk.Button(self.sidebar, text="Wgraj CSV (Piast)", command=self.load_csv_dialog, bg="#0078D7", fg="white").pack(fill="x", pady=2)
-        tk.Button(self.sidebar, text="OBLICZ I GENERUJ RAPORT", command=self.run_calculations, bg="#28a745", fg="white", font=("Arial", 10, "bold")).pack(fill="x", pady=5)
+        tk.Button(self.sidebar, text="Wgraj CSV z profilem terenu z piast.edu.pl", command=self.load_csv_dialog, bg="#0078D7", fg="white").pack(fill="x", pady=2)
+        tk.Button(self.sidebar, text="OBLICZ", command=self.run_calculations, bg="#28a745", fg="white", font=("Arial", 10, "bold")).pack(fill="x", pady=5)
         
         # Przycisk zapisu do pliku
         tk.Button(self.sidebar, text="ZAPISZ WYKRES DO PLIKU", command=self.save_plot, bg="#ffc107", fg="black", font=("Arial", 10, "bold")).pack(fill="x", pady=2)
@@ -161,7 +163,7 @@ class BullingtonApp:
         ToolTip(info_res, "Parametr v: miara wnikania przeszkody w I strefę Fresnela.\nLd: ostateczne straty dyfrakcyjne w decybelach.")
 
 
-        # --- PANEL GŁÓWNY (WYKRES) ---
+        # WYKRES
         self.main_panel = tk.Frame(root, bg="white")
         self.main_panel.pack(side="right", expand=True, fill="both")
         self.fig, self.ax = plt.subplots(figsize=(7, 5))
@@ -185,10 +187,12 @@ class BullingtonApp:
             self.entries['h_ter_rx'].delete(0, tk.END)
             self.entries['h_ter_rx'].insert(0, data['h_ter_rx'])
             
-            # Auto wczytywanie pliku jeśli jest w folderze
-            if data['csv_path'] and os.path.exists(data['csv_path']):
-                self.process_csv(data['csv_path'], silent=True)
-                self.run_calculations()
+            # Auto wczytywanie wbudowanego pliku
+            if data['csv_path']:
+                actual_path = resource_path(data['csv_path'])
+                if os.path.exists(actual_path):
+                    self.process_csv(actual_path, silent=True)
+                    self.run_calculations()
 
     def load_csv_dialog(self):
         file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
@@ -197,19 +201,60 @@ class BullingtonApp:
 
     def process_csv(self, file_path, silent=False):
         try:
-            temp_df = pd.read_csv(file_path, sep=None, decimal=',', engine='python', encoding='utf-8-sig')
-            temp_df.columns = [c.strip() for c in temp_df.columns]
+            distances = []
+            elevations = []
+            col_dist_idx = -1
+            col_elev_idx = -1
             
-            col_dist = "Distance from Tx [km]"
-            col_elev = "Terrain height [m a.s.l.]"
-            
-            if col_dist in temp_df.columns and col_elev in temp_df.columns:
-                self.df = temp_df[[col_dist, col_elev]].rename(columns={col_dist: "distance", col_elev: "elevation"})
+            with open(file_path, mode='r', encoding='utf-8-sig') as file:
+                # Automatyczna detekcja separatora dla CSV
+                sample = file.read(1024)
+                file.seek(0)
+                sniffer = csv.Sniffer()
+                try:
+                    dialect = sniffer.sniff(sample)
+                except csv.Error:
+                    dialect = csv.excel
+                    dialect.delimiter = ',' if ',' in sample else ';'
                 
-                # --- AUTO-UZUPEŁNIANIE Z CSV ---
+                reader = csv.reader(file, dialect)
+                
+                # Zczytywanie nagłówków
+                headers = next(reader)
+                headers = [h.strip() for h in headers]
+                
+                col_dist = "Distance from Tx [km]"
+                col_elev = "Terrain height [m a.s.l.]"
+                
+                if col_dist in headers and col_elev in headers:
+                    col_dist_idx = headers.index(col_dist)
+                    col_elev_idx = headers.index(col_elev)
+                else:
+                    if not silent: messagebox.showerror("Błąd", "Nie znaleziono kolumn z Piasta.")
+                    return
+
+                # Parsowanie danych
+                for row in reader:
+                    if len(row) > max(col_dist_idx, col_elev_idx):
+                        try:
+                            # Obsluga przecinka dziesietnego
+                            d_val = float(row[col_dist_idx].replace(',', '.'))
+                            e_val = float(row[col_elev_idx].replace(',', '.'))
+                            distances.append(d_val)
+                            elevations.append(e_val)
+                        except ValueError:
+                            continue
+
+            if distances and elevations:
+                self.df = {
+                    'distance': np.array(distances),
+                    'elevation': np.array(elevations)
+                }
+                
+                #AUTO-UZUPEŁNIANIE Z CSV
                 d_total = self.df['distance'].max()
-                h_t_tx = self.df['elevation'].iloc[0]
-                h_t_rx = self.df['elevation'].iloc[-1]
+                h_t_tx = self.df['elevation'][0]
+                h_t_rx = self.df['elevation'][-1]
 
                 self.entries['dist'].delete(0, tk.END)
                 self.entries['dist'].insert(0, f"{d_total:.3f}")
@@ -220,8 +265,6 @@ class BullingtonApp:
                 
                 if not silent:
                     messagebox.showinfo("Sukces", "Załadowano profil terenu i zaktualizowano wysokości bazy!")
-            else:
-                if not silent: messagebox.showerror("Błąd", "Nie znaleziono kolumn z Piasta.")
         except Exception as e:
             if not silent: messagebox.showerror("Błąd", f"Błąd wczytywania: {e}")
 
@@ -241,7 +284,7 @@ class BullingtonApp:
         try:
             f = float(self.entries['freq'].get().replace(',', '.'))
             
-            # --- SUMOWANIE TERENU I ANTENY ---
+            # SUMOWANIE TERENU I ANTENY
             ter_tx = float(self.entries['h_ter_tx'].get().replace(',', '.'))
             ant_tx = float(self.entries['h_ant_tx'].get().replace(',', '.'))
             h_tx_val = ter_tx + ant_tx
@@ -253,52 +296,77 @@ class BullingtonApp:
             D_total = float(self.entries['dist'].get().replace(',', '.'))
             k = float(self.entries['k'].get().replace(',', '.'))
             
-            calc_df = None
-            if self.df is not None:
-                calc_df = self.df.copy()
-                calc_df['earth_curve'] = (calc_df['distance'] * (D_total - calc_df['distance'])) / (12.75 * k)
-                calc_df['h_adj'] = calc_df['elevation'] + calc_df['earth_curve']
+            calc_dist = None
+            calc_elev = None
 
-                valid_peaks = calc_df[(calc_df['distance'] > 0.05) & (calc_df['distance'] < D_total - 0.05)]
-                top_4 = valid_peaks.sort_values(by='h_adj', ascending=False).head(4).sort_values(by='distance')
-                
-                for i, (_, row) in enumerate(top_4.iterrows()):
-                    self.manual_points[i][0].delete(0, tk.END)
-                    self.manual_points[i][0].insert(0, f"{row['distance']:.3f}")
-                    self.manual_points[i][1].delete(0, tk.END)
-                    self.manual_points[i][1].insert(0, f"{row['h_adj']:.2f}")
+            if self.df is not None:
+                calc_dist = self.df['distance']
+                calc_elev = self.df['elevation']
+                earth_curve = (calc_dist * (D_total - calc_dist)) / (12.75 * k)
+                h_adj = calc_elev + earth_curve
+
+                # Wykrywanie 4 szczytow (z uzyciem numpy)
+                # Filtrowanie brzegow
+                valid_mask_peaks = (calc_dist > 0.05) & (calc_dist < D_total - 0.05)
+                valid_dist_peaks = calc_dist[valid_mask_peaks]
+                valid_adj_peaks = h_adj[valid_mask_peaks]
+
+                if len(valid_adj_peaks) > 0:
+                    # Znalezienie indeksow 4 najwiekszych (jesli jest mniej to wszystkich)
+                    num_peaks = min(4, len(valid_adj_peaks))
+                    idx_top4 = np.argsort(valid_adj_peaks)[-num_peaks:]
+                    
+                    # Sortowanie wg dystansu
+                    top_dist = valid_dist_peaks[idx_top4]
+                    top_adj = valid_adj_peaks[idx_top4]
+                    sort_idx = np.argsort(top_dist)
+                    
+                    for i in range(4):
+                        self.manual_points[i][0].delete(0, tk.END)
+                        self.manual_points[i][1].delete(0, tk.END)
+                        if i < num_peaks:
+                            self.manual_points[i][0].insert(0, f"{top_dist[sort_idx[i]]:.3f}")
+                            self.manual_points[i][1].insert(0, f"{top_adj[sort_idx[i]]:.2f}")
             else:
-                pts = []
+                pts_dist = []
+                pts_elev = []
                 for d_ent, h_ent in self.manual_points:
                     d_txt, h_txt = d_ent.get().replace(',', '.'), h_ent.get().replace(',', '.')
                     if d_txt and h_txt:
-                        pts.append({'distance': float(d_txt), 'elevation': float(h_txt)})
-                if not pts:
+                        pts_dist.append(float(d_txt))
+                        pts_elev.append(float(h_txt))
+                if not pts_dist:
                     messagebox.showwarning("Brak danych", "Wgraj CSV lub wpisz punkty P1-P4 ręcznie!")
                     return
-                calc_df = pd.DataFrame(pts).sort_values(by='distance')
                 
-                # Zastosowanie krzywizny Ziemi dla punktów wpisanych ręcznie
-                calc_df['earth_curve'] = (calc_df['distance'] * (D_total - calc_df['distance'])) / (12.75 * k)
-                calc_df['h_adj'] = calc_df['elevation'] + calc_df['earth_curve']
+                # Sortowanie
+                sort_idx = np.argsort(pts_dist)
+                calc_dist = np.array(pts_dist)[sort_idx]
+                calc_elev = np.array(pts_elev)[sort_idx]
+                
+                earth_curve = (calc_dist * (D_total - calc_dist)) / (12.75 * k)
+                h_adj = calc_elev + earth_curve
 
-            valid_df = calc_df[(calc_df['distance'] > 0.001) & (calc_df['distance'] < D_total - 0.001)]
-            if valid_df.empty: return
+            valid_mask = (calc_dist > 0.001) & (calc_dist < D_total - 0.001)
+            if not np.any(valid_mask): return
+            
+            valid_dist = calc_dist[valid_mask]
+            valid_h_adj = h_adj[valid_mask]
 
             # OBLICZANIE NACHYLEŃ I IDENTYFIKACJA PUNKTÓW 
-            s1_series = (valid_df['h_adj'] - h_tx_val) / valid_df['distance']
-            s2_series = (valid_df['h_adj'] - h_rx_val) / (D_total - valid_df['distance'])
+            s1_series = (valid_h_adj - h_tx_val) / valid_dist
+            s2_series = (valid_h_adj - h_rx_val) / (D_total - valid_dist)
 
-            s1_max = s1_series.max()
-            s2_max = s2_series.max()
+            s1_max = np.max(s1_series)
+            s2_max = np.max(s2_series)
 
-            idx_s1 = s1_series.idxmax()
-            idx_s2 = s2_series.idxmax()
+            idx_s1 = np.argmax(s1_series)
+            idx_s2 = np.argmax(s2_series)
 
-            tx_horizon_dist = valid_df.loc[idx_s1, 'distance']
-            tx_horizon_elev = valid_df.loc[idx_s1, 'h_adj']
-            rx_horizon_dist = valid_df.loc[idx_s2, 'distance']
-            rx_horizon_elev = valid_df.loc[idx_s2, 'h_adj']
+            tx_horizon_dist = valid_dist[idx_s1]
+            tx_horizon_elev = valid_h_adj[idx_s1]
+            rx_horizon_dist = valid_dist[idx_s2]
+            rx_horizon_elev = valid_h_adj[idx_s2]
 
             print("PUNKTY OPARCIA HORYZONTU")
             print(f"[Tx] Horyzont od nadajnika oparł się o punkt:")
@@ -317,22 +385,35 @@ class BullingtonApp:
 
             self.res_var.set(f"Straty: {loss:.2f} dB  |  v = {v:.3f}")
 
-            top_pts = top_4 if self.df is not None else None
-            self.plot_results(calc_df, D_total, h_tx_val, h_rx_val, db, hb, loss, top_pts)
+            # Zbieranie punktow do wykresu
+            top_pts = None
+            if self.df is not None:
+                top_pts_x = []
+                top_pts_y = []
+                for i in range(4):
+                    d_txt = self.manual_points[i][0].get()
+                    h_txt = self.manual_points[i][1].get()
+                    if d_txt and h_txt:
+                        top_pts_x.append(float(d_txt.replace(',','.')))
+                        top_pts_y.append(float(h_txt.replace(',','.')))
+                if top_pts_x:
+                    top_pts = (np.array(top_pts_x), np.array(top_pts_y))
+
+            self.plot_results(calc_dist, h_adj, D_total, h_tx_val, h_rx_val, db, hb, loss, top_pts)
 
         except Exception as e:
             messagebox.showerror("Błąd", f"Wystąpił błąd podczas obliczeń: {e}")
 
-    def plot_results(self, df, D, h_tx, h_rx, db, hb, loss, top_pts=None):
+    def plot_results(self, dist_array, h_adj_array, D, h_tx, h_rx, db, hb, loss, top_pts=None):
         self.ax.clear()
-        self.ax.fill_between(df['distance'], df['h_adj'], color='#8d6e63', alpha=0.3, label='Profil terenu ')
-        self.ax.plot(df['distance'], df['h_adj'], color='#5d4037', lw=1.5)
+        self.ax.fill_between(dist_array, h_adj_array, color='#8d6e63', alpha=0.3, label='Profil terenu ')
+        self.ax.plot(dist_array, h_adj_array, color='#5d4037', lw=1.5)
         self.ax.plot([0, D], [h_tx, h_rx], color='blue', linestyle='--', label='Linia widoczności (LOS)')
         self.ax.plot(db, hb, 'ro', markersize=9, label='Ostrze Bullingtona')
         self.ax.vlines(db, ymin=min(h_tx, h_rx)-50, ymax=hb, color='red', linestyles='dotted')
         
-        if top_pts is not None and not top_pts.empty:
-            self.ax.scatter(top_pts['distance'], top_pts['h_adj'], marker='x', color='yellow', s=100, zorder=5, label='Wykryte 4 szczyty')
+        if top_pts is not None:
+            self.ax.scatter(top_pts[0], top_pts[1], marker='x', color='yellow', s=100, zorder=5, label='Wykryte 4 szczyty')
 
         self.ax.set_title(f"Profil Dyfrakcyjny Bullingtona (Straty = {loss:.2f} dB)")
         self.ax.set_xlabel("Odległość [km]")
